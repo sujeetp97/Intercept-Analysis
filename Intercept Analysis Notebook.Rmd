@@ -1,0 +1,249 @@
+---
+title: "Intercept Analysis"
+output: html_notebook
+---
+
+
+Simulating the data
+
+```{r}
+n_rows <- 10000
+set.seed(12345567)
+x1 <- sample(x = c(100:100000000), size = n_rows, replace = T)
+x2 <- sample(x = c(100000:100000000), size = n_rows, replace = T)
+x3 <- sample(x = c(5, 20, 50, 100, 400, 1000), size = n_rows, replace = T)
+x4 <- sample(x = seq(-10, 10, 0.001), size = n_rows, replace = T)
+x5 <- sample(x = c(-100000:100000000), size = n_rows, replace = T)
+
+x1 <- sample(x = x1, size = n_rows, replace = T)
+x2 <- sample(x = x2, size = n_rows, replace = T)
+x3 <- sample(x = x3, size = n_rows, replace = T)
+x4 <- sample(x = x4, size = n_rows, replace = T)
+x5 <- sample(x = x4, size = n_rows, replace = T)
+
+y <- 
+  1000 + 
+  (x1 * 10000) +
+  (x2 * 9000) + 
+  ((x3 ^ 3) * (x4 * 100)) + 
+  (x4 ^ 3) +
+  (x5 * 9000)
+
+
+x1_w_noise <- x1 + (sample(x = c(-100:10), size = n_rows, replace = T))
+x2_w_noise <- x2 + (sample(x = c(-100:10000), size = n_rows, replace = T))
+x3_w_noise <- x3 + (sample(x = c(-20:100), size = n_rows, replace = T))
+x4_w_noise <- x4 + (sample(x = seq(0,3,0.01), size = n_rows, replace = T))
+x5_w_noise <- x5 + (sample(x = c(-10000:10000), size = n_rows, replace = T))
+
+```
+
+
+Visualizing data
+```{r}
+
+plot(y~x1)
+plot(y~x2)
+plot(y~x3)
+plot(y~x4)
+
+plot(y~x1_w_noise)
+plot(y~x2_w_noise)
+plot(y~x3_w_noise)
+plot(y~x4_w_noise)
+
+```
+
+Adding to data.table and adding extra variables
+```{r}
+library(data.table)
+dt <- as.data.table(data.frame(
+  y,
+  x1 = x1_w_noise,
+  x2 = x2_w_noise,
+  x3 = x3_w_noise,
+  x4 = x4_w_noise,
+  x5 = x5_w_noise))
+set.seed(5555555)
+dt[, x6 := sample(x = c(100:100000000), size = n_rows, replace = T)]
+dt[, x7 := sample(x = c(100000:100000000), size = n_rows, replace = T)]
+dt[, x8 := sample(x = c(5, 20, 50, 100, 400, 1000), size = n_rows, replace = T)]
+dt[, x9 := sample(x = seq(-10, 10, 0.001), size = n_rows, replace = T)]
+dt[, x10 := sample(x = c(-100000:100000000), size = n_rows, replace = T)]
+
+plot(dt$y~dt$x1)
+plot(dt$y~dt$x6)
+
+plot(dt$y~dt$x2)
+plot(dt$y~dt$x7)
+
+plot(dt$y~dt$x3)
+plot(dt$y~dt$x8)
+
+plot(dt$y~dt$x4)
+plot(dt$y~dt$x9)
+
+plot(dt$y~dt$x5)
+plot(dt$y~dt$x10)
+
+
+```
+
+Checking intercept values by regression for different combinations of inputs
+
+```{r}
+
+imp_col_indices <- c(1, 2, 3, 4, 5)
+random_col_indices <- c(6, 7, 8, 9, 10)
+all_x_indices <- c(imp_col_indices, random_col_indices)
+
+x_combinations <- list()
+for(index in c(1:10)){
+  combs <- combn(x = all_x_indices, m = index, simplify = FALSE)
+  for(sub_index in c(1:NROW(combs))){
+    x_combinations[[NROW(x_combinations) + 1]] <- combs[[sub_index]]
+  }
+}
+
+# mod_obj_list <- list()
+intercepts <- c()
+for(combination in x_combinations){
+  cat("|")
+  cat(NROW(intercepts))
+  temp_dt <- dt[, c("y", paste("x", as.vector(unlist(combination)), sep = "")), with = F]
+  mod_obj <- lm(y ~ ., temp_dt)  
+  # mod_obj_list[[NROW(mod_obj_list) + 1]] <- mod_obj
+  intercepts <- c(intercepts, coefficients(mod_obj)[[1]])
+  
+}
+
+# intercepts <- c()
+# for(mod_obj in mod_obj_list){
+#   intercepts <- c(intercepts, coefficients(mod_obj)[[1]])
+# }
+
+num_imp_cols <- unlist(lapply(X = x_combinations, FUN = function (X){
+  return(NROW(X[X < 6]))
+}))
+
+per_imp_cols <- unlist(lapply(X = x_combinations, FUN = function (X){
+  return(NROW(X[X < 6])/NROW(X))
+}))
+
+imp_cols_effect <- num_imp_cols * per_imp_cols
+
+intercept_analysis_dt <- as.data.table(data.frame(
+  intercepts,
+  num_imp_cols,
+  per_imp_cols,
+  imp_cols_effect
+))
+
+# Creating a measure of strength for all important variables
+mod_obj <- lm(y ~ ., dt)  
+summary(mod_obj)
+
+
+coeff_estimates <- as.vector(unlist(mod_obj$coefficients[2:6]))
+std_errs <- as.vector(unlist(coef(summary(mod_obj))[,2][2:6]))
+t_values <- as.vector(unlist(coef(summary(mod_obj))[,3][2:6]))
+p_values <- as.vector(unlist(coef(summary(mod_obj))[,4][2:6]))
+
+t_values[t_values < 0.001] <- 0.001
+p_values[p_values < 0.001] <- 0.001
+
+combination_strength <- c()
+for(combination in x_combinations){
+  combination <- combination[combination < 6]
+  combination_strength <- c(combination_strength, 
+                            sum(((combination * abs(t_values[combination]))/p_values[combination]), na.rm = T))
+}
+
+
+intercept_analysis_dt[, combination_strength := combination_strength]
+
+```
+
+
+Visual Analysis
+
+```{r}
+
+plot(intercept_analysis_dt$intercepts ~ intercept_analysis_dt$num_imp_cols)
+plot(intercept_analysis_dt$intercepts ~ intercept_analysis_dt$per_imp_cols)
+plot(intercept_analysis_dt$intercepts ~ intercept_analysis_dt$imp_cols_effect)
+
+
+library(rgl)
+plot3d(intercept_analysis_dt[, .(intercepts, num_imp_cols, per_imp_cols)])
+
+library(ggplot2)
+ggplot(data = intercept_analysis_dt, aes(y = intercepts, x = imp_cols_effect, color = as.factor(num_imp_cols))) + geom_point()
+
+ggplot(data = intercept_analysis_dt, aes(y = intercepts, x = combination_strength, color = as.factor(num_imp_cols), size = per_imp_cols)) + geom_point()
+
+
+x <- intercept_analysis_dt$combination_strength
+y <- intercept_analysis_dt$intercepts
+z <- intercept_analysis_dt$per_imp_cols
+
+plot3d(x,y,z, xlab = "Strength", ylab = "Intercept", zlab = "Percent")
+rgl::box3d()
+rgl::polygon3d(x, y, z, plot = T, coords = )
+polygon3d()
+
+
+rgl_init <- function(new.device = FALSE, bg = "white", width = 640) { 
+  if( new.device | rgl.cur() == 0 ) {
+    open3d()
+    par3d()
+    par3d(windowRect = 50 + c( 0, 0, width, width ) )
+    bg3d(color = bg )
+    
+  }
+  
+  clear3d(type = c("shapes", "bboxdeco"))
+  view3d(theta = 15, phi = 20, zoom = 0.7)
+}
+
+rgl_init()
+spheres3d(x, y, z, r = 0.2, color = "yellow")
+bbox3d(color = "#333377")
+
+
+open3d()# Open a new RGL device
+bg3d(color = "white") # Setup the background color
+points3d(x, y, z, color = "blue") # Scatter plot
+
+open3d() # Open a new RGL device
+points3d(x, y, z, color ="lightgray") # Scatter plot
+
+
+plot3d(x,y,z, type = 's', size = 1, col = 'gray')
+
+plot3d(x,intercept_analysis_dt$imp_cols_effect,z, type = 's', size = 1, col = 'yellow')
+bbox3d(color=c("#333377","black"), emission="#333377",
+         specular="#3333FF", shininess=5, alpha=0.8 ) 
+
+
+
+
+
+
+```
+
+
+
+```{r}
+source("lib/intercept_analysis_util.R")
+
+dt1 <- get_simulated_data(n_rows = 100000)
+intercept_a_dt_1 <- get_intercept_analysis_dt(dt = dt1)
+
+
+ggplot(data = intercept_a_dt_1, aes(y = intercepts, x = combination_strength, color = per_imp_cols)) + geom_point() + scale_color_gradient2(low="yellow", high="red", mid = "black", midpoint = mean(intercept_analysis_dt$per_imp_cols)) + theme(panel.background = element_rect(fill = 'white', colour = 'white'))
+
+show_simulated_data_variables(dt = dt1)
+
+```
+
